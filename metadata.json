@@ -1,0 +1,7 @@
+{
+  "name": "Gemini PDF Architect",
+  "description": "An AI-powered PDF editor that allows you to modify documents using natural language commands. Optimized for Windows and Android APK deployment.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

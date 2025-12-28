@@ -1,0 +1,34 @@
+
+{
+  "name": "gemini-pdf-architect",
+  "version": "2.0.0",
+  "description": "AI-powered Visual PDF Architect and Editor",
+  "main": "main.js",
+  "author": "Architect Labs",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "android:init": "npx cap init ArchitectPro com.architect.pro.pdf",
+    "android:add": "npx cap add android",
+    "android:copy": "npx cap copy android",
+    "android:open": "npx cap open android",
+    "android:sync": "npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^5.7.0",
+    "@capacitor/android": "^5.7.0"
+  },
+  "devDependencies": {
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1",
+    "@capacitor/cli": "^5.7.0"
+  },
+  "build": {
+    "appId": "com.architect.pro.pdf",
+    "productName": "ArchitectPro",
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "icon.ico"
+    }
+  }
+}

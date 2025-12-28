@@ -1,0 +1,33 @@
+
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/pdf-architect', '.']
+
+  # Push the image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/pdf-architect']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'pdf-architect'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/pdf-architect'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      # This allows you to set the API key in the Cloud Run environment
+      - '--set-env-vars'
+      - 'API_KEY=${_API_KEY}'
+
+substitutions:
+  _API_KEY: 'your-api-key-here'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

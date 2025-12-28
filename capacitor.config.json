@@ -1,0 +1,10 @@
+
+{
+  "appId": "com.architect.pro.pdf",
+  "appName": "Architect Pro",
+  "webDir": ".",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}
