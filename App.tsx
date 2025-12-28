@@ -23,6 +23,7 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 1024);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showApkModal, setShowApkModal] = useState(false);
+  const [apkModalTab, setApkModalTab] = useState<'terminal' | 'studio'>('terminal');
 
   // Tools and Selection
   const [activeTool, setActiveTool] = useState<ToolMode>('ai');
@@ -157,7 +158,6 @@ const App: React.FC = () => {
       }
 
       setStatusMessage("Processing assets...");
-      // Handle special actions like image generation
       for (const instruction of instructions) {
         if (instruction.action === EditActionType.GENERATE_IMAGE && instruction.parameters.imagePrompt) {
           setStatusMessage(`Generating: ${instruction.parameters.imagePrompt}`);
@@ -199,7 +199,6 @@ const App: React.FC = () => {
       setPdfMetadata({ name: file.name, pageCount: pdf.numPages, fileSize: file.size });
       pushToHistory(bytes);
       
-      // Basic text extraction for global context
       let fullText = "";
       for (let i = 1; i <= Math.min(5, pdf.numPages); i++) {
         const page = await pdf.getPage(i);
@@ -247,7 +246,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-900 text-white font-sans overflow-hidden">
-      {/* Mobile-Optimized Header */}
       <header className="bg-slate-800 border-b border-white/10 p-4 flex items-center justify-between z-50 shadow-2xl">
         <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-700 active:scale-90 lg:hidden">
@@ -293,7 +291,6 @@ const App: React.FC = () => {
       </header>
 
       <div className="flex-1 flex relative">
-        {/* Sidebar / Drawer */}
         <aside className={`absolute lg:static inset-y-0 left-0 w-full lg:w-[380px] bg-slate-800 border-r border-white/5 shadow-2xl transition-transform duration-300 z-40 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
           <div className="p-6 space-y-8 overflow-y-auto h-full">
             <section>
@@ -344,7 +341,6 @@ const App: React.FC = () => {
           </div>
         </aside>
 
-        {/* PDF Canvas Area */}
         <main className="flex-1 bg-slate-950 overflow-auto flex items-start justify-center p-4 lg:p-12 relative scrollbar-hide">
           {pdfFile ? (
             <div className="relative shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8)] rounded-sm overflow-hidden bg-white">
@@ -388,48 +384,62 @@ const App: React.FC = () => {
         </main>
       </div>
 
-      {/* APK BUILD MODAL */}
       {showApkModal && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 animate-in fade-in duration-300">
           <div className="bg-slate-900 w-full max-w-2xl rounded-[3rem] border border-white/10 shadow-[0_50px_100px_rgba(0,0,0,0.8)] overflow-hidden">
-            <div className="p-12 space-y-10">
+            <div className="p-8 lg:p-12 space-y-8">
               <div className="text-center">
-                <div className="w-24 h-24 bg-emerald-500/20 rounded-[2.5rem] flex items-center justify-center mx-auto mb-6 text-emerald-400 shadow-xl">
-                  <i className="fab fa-android text-5xl"></i>
+                <div className="w-20 h-20 bg-emerald-500/20 rounded-[2rem] flex items-center justify-center mx-auto mb-6 text-emerald-400 shadow-xl">
+                  <i className="fab fa-android text-4xl"></i>
                 </div>
-                <h3 className="text-3xl font-black tracking-tighter">Android APK Pipeline</h3>
-                <p className="text-slate-400 text-sm mt-3 font-medium">To generate your APK, run the following commands in your terminal:</p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="bg-black/50 p-6 rounded-[2rem] font-mono text-xs border border-white/5 relative group">
-                  <p className="text-indigo-400 mb-2"># Install dependencies & build</p>
-                  <p className="text-slate-300">npm install</p>
-                  <p className="text-slate-300">npx cap sync android</p>
-                  <p className="text-slate-300">npx cap open android</p>
-                  <button 
-                    onClick={() => {navigator.clipboard.writeText("npm install; npx cap sync android; npx cap open android"); setStatusMessage("Commands Copied!");}}
-                    className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors"
-                  >
-                    <i className="fas fa-copy"></i>
-                  </button>
-                </div>
-
-                <div className="bg-slate-800/50 p-6 rounded-[2rem] space-y-3">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Next Steps in Android Studio:</p>
-                  <ul className="text-xs space-y-2 font-medium">
-                    <li className="flex items-center gap-3"><i className="fas fa-check-circle text-emerald-500"></i> Wait for Gradle sync to complete.</li>
-                    <li className="flex items-center gap-3"><i className="fas fa-check-circle text-emerald-500"></i> Click "Build" > "Build APK(s)".</li>
-                    <li className="flex items-center gap-3"><i className="fas fa-check-circle text-emerald-500"></i> Locate your APK in the "debug" folder.</li>
-                  </ul>
+                <h3 className="text-2xl font-black tracking-tighter">Build Android Workspace</h3>
+                <div className="flex justify-center gap-2 mt-6">
+                  <button onClick={() => setApkModalTab('terminal')} className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${apkModalTab === 'terminal' ? 'bg-indigo-600' : 'bg-slate-800 text-slate-500'}`}>1. Terminal Prep</button>
+                  <button onClick={() => setApkModalTab('studio')} className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${apkModalTab === 'studio' ? 'bg-indigo-600' : 'bg-slate-800 text-slate-500'}`}>2. Studio Build</button>
                 </div>
               </div>
+
+              {apkModalTab === 'terminal' ? (
+                <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
+                  <p className="text-slate-400 text-xs font-medium text-center">Run these in your project folder to link Capacitor:</p>
+                  <div className="bg-black/50 p-6 rounded-[2rem] font-mono text-[11px] border border-white/5 relative group">
+                    <p className="text-indigo-400 mb-2"># Initialize and Sync</p>
+                    <p className="text-slate-300">npm install</p>
+                    <p className="text-slate-300">npx cap sync android</p>
+                    <p className="text-indigo-400 mt-4 mb-2"># Launch Android Studio</p>
+                    <p className="text-slate-300">npx cap open android</p>
+                    <button 
+                      onClick={() => {navigator.clipboard.writeText("npm install; npx cap sync android; npx cap open android"); setStatusMessage("Commands Copied!");}}
+                      className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors"
+                    >
+                      <i className="fas fa-copy"></i>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4 animate-in fade-in slide-in-from-left-4">
+                  <div className="bg-slate-800/50 p-6 rounded-[2rem] space-y-6">
+                    <div className="flex gap-4">
+                      <div className="w-8 h-8 rounded-full bg-indigo-600 flex-shrink-0 flex items-center justify-center text-[10px] font-black">1</div>
+                      <p className="text-xs font-medium text-slate-300">Wait for the <span className="text-white font-bold">Gradle Sync</span> (bottom progress bar) to finish completely.</p>
+                    </div>
+                    <div className="flex gap-4">
+                      <div className="w-8 h-8 rounded-full bg-indigo-600 flex-shrink-0 flex items-center justify-center text-[10px] font-black">2</div>
+                      <p className="text-xs font-medium text-slate-300">In the top menu, select <span className="text-indigo-400 font-bold">Build > Build Bundle(s) / APK(s) > Build APK(s)</span>.</p>
+                    </div>
+                    <div className="flex gap-4">
+                      <div className="w-8 h-8 rounded-full bg-indigo-600 flex-shrink-0 flex items-center justify-center text-[10px] font-black">3</div>
+                      <p className="text-xs font-medium text-slate-300">Once finished, click the <span className="text-emerald-400 font-bold">"locate"</span> link in the pop-up notification.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <button 
                 onClick={() => setShowApkModal(false)}
                 className="w-full bg-white text-slate-900 py-5 rounded-[2rem] font-black uppercase tracking-[0.25em] text-xs shadow-2xl active:scale-95 transition-all"
               >
-                Close Build Center
+                Done
               </button>
             </div>
           </div>
