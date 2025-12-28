@@ -16,13 +16,13 @@ const hexToRgb = (hex: string) => {
 };
 
 /**
- * Searches for a text string on a specific page and returns coordinates.
+ * Searches for a text string on a specific page and returns coordinates and formatting metadata.
  */
 const findTextCoords = async (
   pdfBytes: Uint8Array, 
   pageNumber: number, 
   searchText: string
-): Promise<{ x: number; y: number; width: number; height: number } | null> => {
+): Promise<{ x: number; y: number; width: number; height: number; fontSize?: number } | null> => {
   try {
     const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
     const pdf = await loadingTask.promise;
@@ -34,12 +34,17 @@ const findTextCoords = async (
     ) as any;
 
     if (item) {
-      const [fontHeight, rotate1, rotate2, fontWidth, x, y] = item.transform;
+      const transform = item.transform;
+      // transform: [scaleX, skewY, skewX, scaleY, translateX, translateY]
+      // scaleY is often the font size in points
+      const fontSize = Math.abs(transform[3]);
+      
       return {
-        x: x,
-        y: y,
-        width: item.width || (searchText.length * fontWidth * 0.5),
-        height: fontHeight
+        x: transform[4],
+        y: transform[5],
+        width: item.width,
+        height: fontSize, // Using scaleY as a better proxy for height
+        fontSize: fontSize
       };
     }
     return null;
@@ -67,8 +72,9 @@ export const applyEditsToPdf = async (
     let targetY = ((parameters.y || 0) / 100) * pageHeight;
     let targetWidth = (parameters.width || 0) * (pageWidth / 100);
     let targetHeight = (parameters.height || 0) * (pageHeight / 100);
+    let detectedFontSize = parameters.fontSize;
 
-    // Precise Text Replacement Logic
+    // Precise Text Replacement Logic with Formatting Preservation
     if (action === EditActionType.REPLACE_TEXT && parameters.targetText) {
       const coords = await findTextCoords(pdfBytes, instruction.pageNumber, parameters.targetText);
       if (coords) {
@@ -76,22 +82,26 @@ export const applyEditsToPdf = async (
         targetY = coords.y;
         targetWidth = coords.width;
         targetHeight = coords.height;
+        detectedFontSize = coords.fontSize || detectedFontSize;
       }
       
+      // "White out" the old text area
       page.drawRectangle({
-        x: targetX - 2,
-        y: targetY - 2,
-        width: targetWidth + 4,
-        height: targetHeight + 4,
+        x: targetX - 1,
+        y: targetY - 1,
+        width: targetWidth + 2,
+        height: targetHeight + 2,
         color: rgb(1, 1, 1),
       });
+      
+      const textColor = parameters.color ? hexToRgb(parameters.color) : { r: 0, g: 0, b: 0 };
       
       page.drawText(parameters.newText || '', {
         x: targetX,
         y: targetY,
-        size: parameters.fontSize || targetHeight || 12,
+        size: parameters.fontSize || detectedFontSize || 12,
         font: font,
-        color: rgb(0, 0, 0),
+        color: rgb(textColor.r, textColor.g, textColor.b),
       });
       continue;
     }

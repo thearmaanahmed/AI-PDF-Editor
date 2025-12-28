@@ -53,16 +53,16 @@ export const processPdfCommand = async (
       TOTAL PAGES: ${pageCount}
 
       Instructions:
-      1. If the user refers to "this" or "here", they mean the selection area.
-      2. If replacing text, provide 'targetText' (original) and 'newText'.
-      3. For generating images, use the selection area coordinates for placement.
-      4. Coordinates: X=0 Left, X=100 Right. Y=0 Bottom, Y=100 Top.
+      1. CRITICAL: Try to preserve original formatting (font size, color, relative position) when replacing text.
+      2. If the user refers to "this" or "here", they mean the selection area.
+      3. For text replacement, identify the EXACT 'targetText' from the context to replace.
+      4. If the user wants to add an image, use EditActionType.GENERATE_IMAGE with an 'imagePrompt'.
+      5. Coordinates: X=0 Left, X=100 Right. Y=0 Bottom, Y=100 Top. Note that PDF-lib uses a bottom-up Y coordinate system.
       
       Output JSON array of EditInstruction objects.
     `}
   ];
 
-  // If we have an image of the selection, send it to the model for better context
   if (selectionImageBase64) {
     parts.unshift({
       inlineData: {
