@@ -35,6 +35,9 @@ const App: React.FC = () => {
   const [activeHandle, setActiveHandle] = useState<HandleType>(null);
   const [initialSelection, setInitialSelection] = useState<SelectionArea | null>(null);
 
+  // Manual Edit State
+  const [manualText, setManualText] = useState({ target: '', replacement: '', size: 12, color: '#000000' });
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pdfFile = historyIndex >= 0 ? history[historyIndex] : null;
 
@@ -107,7 +110,7 @@ const App: React.FC = () => {
     const wasSelecting = isSelecting;
     setIsSelecting(false);
     setActiveHandle(null);
-    if (wasSelecting && selection && activeTool === 'ai') {
+    if (wasSelecting && selection) {
       await performVisualOCROnSelection();
     }
   };
@@ -115,7 +118,7 @@ const App: React.FC = () => {
   const performVisualOCROnSelection = async () => {
     if (!canvasRef.current || !selection) return;
     const canvas = canvasRef.current;
-    setStatusMessage("Scanning...");
+    setStatusMessage("Scanning Selection...");
     try {
       const cropX = (selection.x1 / 100) * canvas.width;
       const cropY = (selection.y1 / 100) * canvas.height;
@@ -130,10 +133,52 @@ const App: React.FC = () => {
         setSelectionImage(dataUrl);
         const ocrText = await performVisualOCR(dataUrl);
         setSelectedText(ocrText);
-        setStatusMessage(ocrText.includes("No text") ? "Target Locked" : "Content Identified");
+        
+        // Auto-fill manual text panel
+        if (activeTool === 'text') {
+          setManualText(prev => ({ ...prev, target: ocrText === 'No text found' ? '' : ocrText }));
+        }
+
+        setStatusMessage(ocrText.includes("No text") ? "Area Selected" : "Text Detected");
         setTimeout(() => setStatusMessage(""), 2000);
       }
-    } catch (err) { setStatusMessage("Vision Error"); }
+    } catch (err) { setStatusMessage("Scan Error"); }
+  };
+
+  const handleManualEdit = async () => {
+    if (!pdfFile || (!manualText.replacement && !manualText.target)) return;
+    setIsProcessing(true);
+    setStatusMessage("Applying Manual Edit...");
+
+    try {
+      const instruction: EditInstruction = {
+        action: manualText.target ? EditActionType.REPLACE_TEXT : EditActionType.ADD_TEXT,
+        pageNumber: currentPage,
+        explanation: "Manual user edit",
+        parameters: {
+          targetText: manualText.target,
+          newText: manualText.replacement,
+          fontSize: manualText.size,
+          color: manualText.color,
+          x: selection?.x1 || 50,
+          y: 100 - (selection?.y1 || 50), // PDF coordinate system is bottom-up
+        }
+      };
+
+      const updatedPdfBytes = await applyEditsToPdf(pdfFile, [instruction]);
+      pushToHistory(updatedPdfBytes);
+      await renderPage(updatedPdfBytes, currentPage);
+      
+      setStatusMessage("Applied!");
+      setManualText(prev => ({ ...prev, replacement: '' }));
+      setSelection(null);
+    } catch (err) {
+      console.error(err);
+      setStatusMessage("Edit failed.");
+    } finally {
+      setIsProcessing(false);
+      setTimeout(() => setStatusMessage(""), 2000);
+    }
   };
 
   const handleCommandExecution = async () => {
@@ -174,7 +219,7 @@ const App: React.FC = () => {
       pushToHistory(updatedPdfBytes);
       await renderPage(updatedPdfBytes, currentPage);
       
-      setStatusMessage("Success!");
+      setStatusMessage("AI Edit Success!");
       setCommand("");
       setSelection(null);
       setSelectedText('');
@@ -297,7 +342,7 @@ const App: React.FC = () => {
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Toolbox</p>
               <div className="grid grid-cols-3 gap-2 bg-slate-900/50 p-1 rounded-2xl">
                 {(['ai', 'text', 'rect'] as ToolMode[]).map(tool => (
-                  <button key={tool} onClick={() => setActiveTool(tool)} className={`py-4 rounded-xl flex flex-col items-center gap-2 transition-all ${activeTool === tool ? 'bg-indigo-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}>
+                  <button key={tool} onClick={() => {setActiveTool(tool); setSelection(null);}} className={`py-4 rounded-xl flex flex-col items-center gap-2 transition-all ${activeTool === tool ? 'bg-indigo-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}>
                     <i className={`fas ${tool === 'ai' ? 'fa-robot' : tool === 'text' ? 'fa-font' : 'fa-vector-square'}`}></i>
                     <span className="text-[8px] font-black uppercase tracking-widest">{tool}</span>
                   </button>
@@ -305,28 +350,112 @@ const App: React.FC = () => {
               </div>
             </section>
 
-            <section className="bg-slate-900 p-6 rounded-[2rem] border border-white/5 space-y-4 shadow-inner">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Neural Input</p>
-                <div className="flex gap-1">
-                  <span className={`w-1 h-1 rounded-full bg-indigo-500 ${isProcessing ? 'animate-ping' : ''}`}></span>
-                </div>
-              </div>
-              <textarea 
-                value={command}
-                onChange={e => setCommand(e.target.value)}
-                disabled={isProcessing}
-                placeholder="Example: Replace the title with 'Q3 Revenue Report'..."
-                className="w-full h-32 bg-transparent text-sm font-medium resize-none focus:outline-none placeholder:text-slate-700 leading-relaxed disabled:opacity-50"
-              />
-              <button 
-                onClick={handleCommandExecution}
-                disabled={isProcessing || !pdfFile}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isProcessing ? 'Architecting...' : 'Execute Command'}
-              </button>
-            </section>
+            {/* Contextual Panels */}
+            <div className="space-y-6">
+              {activeTool === 'ai' && (
+                <section className="bg-slate-900 p-6 rounded-[2rem] border border-white/5 space-y-4 shadow-inner animate-in fade-in slide-in-from-bottom-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Neural Input</p>
+                    <div className="flex gap-1">
+                      <span className={`w-1 h-1 rounded-full bg-indigo-500 ${isProcessing ? 'animate-ping' : ''}`}></span>
+                    </div>
+                  </div>
+                  <textarea 
+                    value={command}
+                    onChange={e => setCommand(e.target.value)}
+                    disabled={isProcessing}
+                    placeholder="Example: Replace the title with 'Q3 Revenue Report'..."
+                    className="w-full h-32 bg-transparent text-sm font-medium resize-none focus:outline-none placeholder:text-slate-700 leading-relaxed disabled:opacity-50"
+                  />
+                  <button 
+                    onClick={handleCommandExecution}
+                    disabled={isProcessing || !pdfFile}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    {isProcessing ? 'Architecting...' : 'Execute AI Command'}
+                  </button>
+                  <p className="text-[9px] text-slate-500 text-center uppercase tracking-widest font-bold">Use selection to focus AI context</p>
+                </section>
+              )}
+
+              {activeTool === 'text' && (
+                <section className="bg-slate-900 p-6 rounded-[2rem] border border-white/5 space-y-5 shadow-inner animate-in fade-in slide-in-from-bottom-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Text Architect</p>
+                    <i className="fas fa-font text-xs text-indigo-500/50"></i>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Target Text (to replace)</label>
+                      <input 
+                        type="text" 
+                        value={manualText.target}
+                        onChange={e => setManualText({...manualText, target: e.target.value})}
+                        placeholder="Select text on canvas..."
+                        className="w-full bg-slate-950 border border-white/5 px-4 py-3 rounded-xl text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1 block">New Text / Insertion</label>
+                      <input 
+                        type="text" 
+                        value={manualText.replacement}
+                        onChange={e => setManualText({...manualText, replacement: e.target.value})}
+                        placeholder="Type new text here..."
+                        className="w-full bg-slate-950 border border-white/5 px-4 py-3 rounded-xl text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Font Size</label>
+                        <input 
+                          type="number" 
+                          value={manualText.size}
+                          onChange={e => setManualText({...manualText, size: parseInt(e.target.value)})}
+                          className="w-full bg-slate-950 border border-white/5 px-4 py-3 rounded-xl text-xs focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Color</label>
+                        <div className="flex items-center bg-slate-950 border border-white/5 px-3 py-1 rounded-xl">
+                          <input 
+                            type="color" 
+                            value={manualText.color}
+                            onChange={e => setManualText({...manualText, color: e.target.value})}
+                            className="w-6 h-6 bg-transparent border-none"
+                          />
+                          <span className="text-[10px] font-mono ml-2 opacity-50">{manualText.color}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={handleManualEdit}
+                    disabled={isProcessing || (!manualText.target && !manualText.replacement)}
+                    className="w-full bg-white text-slate-900 hover:bg-slate-100 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    Apply Manual Edit
+                  </button>
+                </section>
+              )}
+
+              {activeTool === 'rect' && (
+                <section className="bg-slate-900 p-6 rounded-[2rem] border border-white/5 space-y-5 shadow-inner animate-in fade-in slide-in-from-bottom-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Shape Architect</p>
+                    <i className="fas fa-vector-square text-xs text-indigo-500/50"></i>
+                  </div>
+                  <div className="p-8 text-center bg-slate-950/50 rounded-2xl border border-dashed border-white/10">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-relaxed">Draw a box on the PDF to insert a shape or background highlight</p>
+                  </div>
+                  <button className="w-full bg-slate-800 text-slate-400 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest cursor-not-allowed">
+                    Draw on canvas...
+                  </button>
+                </section>
+              )}
+            </div>
 
             {!pdfFile && (
               <label className="group block w-full bg-white text-slate-900 p-8 rounded-[2.5rem] text-center cursor-pointer active:scale-95 transition-all shadow-2xl hover:bg-indigo-50">
@@ -348,17 +477,16 @@ const App: React.FC = () => {
                 ref={canvasRef}
                 onMouseDown={handleStart} onMouseMove={handleMove} onMouseUp={handleEnd}
                 onTouchStart={handleStart} onTouchMove={handleMove} onTouchEnd={handleEnd}
-                className="block max-w-full"
+                className={`block max-w-full ${activeTool === 'text' ? 'cursor-text' : activeTool === 'ai' ? 'cursor-crosshair' : 'cursor-cell'}`}
               />
               {selection && (
                 <div 
-                  className="absolute border-2 border-indigo-500 bg-indigo-500/5 pointer-events-none ring-1 ring-white/20"
+                  className={`absolute border-2 pointer-events-none ring-1 ring-white/20 transition-colors ${activeTool === 'ai' ? 'border-indigo-500 bg-indigo-500/5' : activeTool === 'text' ? 'border-emerald-500 bg-emerald-500/5' : 'border-amber-500 bg-amber-500/5'}`}
                   style={{ left: `${selection.x1}%`, top: `${selection.y1}%`, width: `${selection.x2 - selection.x1}%`, height: `${selection.y2 - selection.y1}%` }}
                 >
-                  <div className="absolute -top-3 -left-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg flex items-center justify-center text-indigo-600 text-[10px] font-black"><i className="fas fa-expand"></i></div>
-                  <div className="absolute -top-3 -right-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg" />
-                  <div className="absolute -bottom-3 -left-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg" />
-                  <div className="absolute -bottom-3 -right-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg" />
+                  <div className={`absolute -top-3 -left-3 w-8 h-8 bg-white border-2 rounded-full shadow-lg flex items-center justify-center text-[10px] font-black ${activeTool === 'ai' ? 'border-indigo-500 text-indigo-600' : 'border-emerald-500 text-emerald-600'}`}>
+                    <i className={`fas ${activeTool === 'ai' ? 'fa-robot' : 'fa-font'}`}></i>
+                  </div>
                 </div>
               )}
             </div>
