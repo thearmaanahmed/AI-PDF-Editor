@@ -1,4 +1,3 @@
-
 {
   "name": "gemini-pdf-architect",
   "version": "2.0.0",
@@ -8,11 +7,8 @@
   "scripts": {
     "start": "electron .",
     "build:win": "electron-builder --win",
-    "android:init": "npx cap init ArchitectPro com.architect.pro.pdf",
-    "android:add": "npx cap add android",
-    "android:copy": "npx cap copy android",
-    "android:open": "npx cap open android",
-    "android:sync": "npx cap sync android"
+    "android:sync": "powershell -ExecutionPolicy Bypass -File ./build-apk.ps1",
+    "android:open": "npx cap open android"
   },
   "dependencies": {
     "@capacitor/core": "^5.7.0",
