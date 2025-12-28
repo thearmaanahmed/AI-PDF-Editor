@@ -1,4 +1,3 @@
-
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 import { EditActionType, EditInstruction } from '../types';
@@ -30,10 +29,10 @@ const findTextCoords = async (
     const textContent = await page.getTextContent();
 
     const item = textContent.items.find((i: any) => 
-      i.str.toLowerCase().includes(searchText.toLowerCase())
+      i.str && i.str.toLowerCase().includes(searchText.toLowerCase())
     ) as any;
 
-    if (item) {
+    if (item && item.transform) {
       const transform = item.transform;
       // transform: [scaleX, skewY, skewX, scaleY, translateX, translateY]
       // scaleY is often the font size in points
@@ -42,8 +41,8 @@ const findTextCoords = async (
       return {
         x: transform[4],
         y: transform[5],
-        width: item.width,
-        height: fontSize, // Using scaleY as a better proxy for height
+        width: item.width || 0,
+        height: fontSize || 12,
         fontSize: fontSize
       };
     }

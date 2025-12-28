@@ -6,7 +6,8 @@ Follow these steps to generate your production-ready APK on Windows.
 * **Node.js**: [Download](https://nodejs.org/) (LTS version).
 * **Android Studio**: [Download](https://developer.android.com/studio).
 * **Java Development Kit (JDK)**: Android Studio typically bundles this, but ensure you have **JDK 17** installed for modern Gradle versions.
-* **Environment Variables**: Ensure `ANDROID_HOME` is set to your SDK location (usually `C:\Users\YourUser\AppData\Local\Android\Sdk`).
+* **Environment Variables**: Ensure `ANDROID_HOME` is set to your SDK location 
+(usually `C:\Users\YourUser\AppData\Local\Android\Sdk`).
 
 ## 2. Preparing the Source
 Run these commands in your project root:
