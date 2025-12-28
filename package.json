@@ -6,8 +6,8 @@
   "author": "Architect Labs",
   "scripts": {
     "start": "electron .",
-    "build:win": "electron-builder --win",
-    "android:sync": "powershell -ExecutionPolicy Bypass -File ./build-apk.ps1",
+    "build": "powershell -ExecutionPolicy Bypass -File ./build-apk.ps1",
+    "android:sync": "npm run build",
     "android:open": "npx cap open android"
   },
   "dependencies": {
