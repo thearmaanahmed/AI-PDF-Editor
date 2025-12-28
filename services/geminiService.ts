@@ -1,12 +1,8 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { EditActionType, EditInstruction, SelectionArea } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-/**
- * Performs Visual OCR on a specific image segment using Gemini's vision capabilities.
- */
 export const performVisualOCR = async (imageBase64: string): Promise<string> => {
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -41,7 +37,7 @@ export const processPdfCommand = async (
       Act as a PDF layout expert. Interpret the following user command for a PDF document.
       
       GLOBAL CONTEXT (Text extracted from the document):
-      ${pdfTextContext.substring(0, 3000)}
+      ${pdfTextContext.substring(0, 4000)}
       
       SPATIAL CONTEXT:
       ${selectionArea ? `User selected box: X1:${selectionArea.x1}%, Y1:${selectionArea.y1}%, X2:${selectionArea.x2}%, Y2:${selectionArea.y2}%.` : "No specific area selected."}
@@ -53,13 +49,11 @@ export const processPdfCommand = async (
       TOTAL PAGES: ${pageCount}
 
       Instructions:
-      1. CRITICAL: Try to preserve original formatting (font size, color, relative position) when replacing text.
-      2. If the user refers to "this" or "here", they mean the selection area.
-      3. For text replacement, identify the EXACT 'targetText' from the context to replace.
-      4. If the user wants to add an image, use EditActionType.GENERATE_IMAGE with an 'imagePrompt'.
-      5. Coordinates: X=0 Left, X=100 Right. Y=0 Bottom, Y=100 Top. Note that PDF-lib uses a bottom-up Y coordinate system.
-      
-      Output JSON array of EditInstruction objects.
+      1. CRITICAL: For text replacement, identify the EXACT 'targetText' (case-sensitive if possible) to replace from the context.
+      2. If the user asks to "change X to Y", 'targetText' is X and 'newText' is Y.
+      3. If the user refers to "this text" or "here", use the 'selectedText' as the target.
+      4. Coordinates: X=0 Left, X=100 Right. Y=0 Bottom, Y=100 Top. 
+      5. Output ONLY a valid JSON array of EditInstruction objects.
     `}
   ];
 
@@ -111,7 +105,8 @@ export const processPdfCommand = async (
   });
 
   try {
-    return JSON.parse(response.text || "[]");
+    const text = response.text || "[]";
+    return JSON.parse(text);
   } catch (error) {
     console.error("Failed to parse Gemini response:", error);
     return [];
