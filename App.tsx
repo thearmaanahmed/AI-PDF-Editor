@@ -21,6 +21,8 @@ const App: React.FC = () => {
   const [pdfText, setPdfText] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 1024);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showApkModal, setShowApkModal] = useState(false);
 
   // Tools and Selection
   const [activeTool, setActiveTool] = useState<ToolMode>('ai');
@@ -29,19 +31,12 @@ const App: React.FC = () => {
   const [startPoint, setStartPoint] = useState<{ x: number, y: number } | null>(null);
   const [selectedText, setSelectedText] = useState('');
   const [selectionImage, setSelectionImage] = useState<string | null>(null);
-  const [stagedAsset, setStagedAsset] = useState<{ type: 'image' | 'text', content: string } | null>(null);
   const [activeHandle, setActiveHandle] = useState<HandleType>(null);
   const [initialSelection, setInitialSelection] = useState<SelectionArea | null>(null);
-
-  // Modals
-  const [showTextModal, setShowTextModal] = useState(false);
-  const [textConfig, setTextConfig] = useState({ text: '', fontSize: 18, color: '#000000' });
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pdfFile = historyIndex >= 0 ? history[historyIndex] : null;
 
-  // Unified Coordinates for Mouse & Touch
   const getEventCoords = (e: any) => {
     if (!canvasRef.current) return { x: 0, y: 0 };
     const rect = canvasRef.current.getBoundingClientRect();
@@ -56,39 +51,35 @@ const App: React.FC = () => {
   const handleStart = (e: any) => {
     if (!pdfFile || !canvasRef.current) return;
     const { x, y } = getEventCoords(e);
-
     if (selection) {
-      const handleSize = 4; // Larger handles for touch
+      const handleSize = 4;
       const isNW = Math.abs(x - selection.x1) < handleSize && Math.abs(y - selection.y1) < handleSize;
       const isNE = Math.abs(x - selection.x2) < handleSize && Math.abs(y - selection.y1) < handleSize;
       const isSW = Math.abs(x - selection.x1) < handleSize && Math.abs(y - selection.y2) < handleSize;
       const isSE = Math.abs(x - selection.x2) < handleSize && Math.abs(y - selection.y2) < handleSize;
       const isInside = x > selection.x1 && x < selection.x2 && y > selection.y1 && y < selection.y2;
-
       if (isNW) setActiveHandle('nw');
       else if (isNE) setActiveHandle('ne');
       else if (isSW) setActiveHandle('sw');
       else if (isSE) setActiveHandle('se');
       else if (isInside) setActiveHandle('move');
       else setActiveHandle(null);
-
       if (isNW || isNE || isSW || isSE || isInside) {
         setStartPoint({ x, y });
         setInitialSelection({ ...selection });
         return;
       }
     }
-
     setStartPoint({ x, y });
     setIsSelecting(true);
     setSelection(null);
-    setStagedAsset(null);
+    setSelectedText('');
+    setSelectionImage(null);
   };
 
   const handleMove = (e: any) => {
     if (!canvasRef.current || (!isSelecting && !activeHandle)) return;
     const { x, y } = getEventCoords(e);
-
     if (isSelecting && startPoint) {
       setSelection({
         x1: Math.min(startPoint.x, x),
@@ -139,8 +130,62 @@ const App: React.FC = () => {
         const ocrText = await performVisualOCR(dataUrl);
         setSelectedText(ocrText);
         setStatusMessage(ocrText.includes("No text") ? "Target Locked" : "Content Identified");
+        setTimeout(() => setStatusMessage(""), 2000);
       }
     } catch (err) { setStatusMessage("Vision Error"); }
+  };
+
+  const handleCommandExecution = async () => {
+    if (!pdfFile || !command.trim()) return;
+    setIsProcessing(true);
+    setStatusMessage("AI is thinking...");
+    
+    try {
+      const instructions = await processPdfCommand(
+        command,
+        pdfText,
+        pdfMetadata?.pageCount || 1,
+        selection || undefined,
+        selectedText,
+        selectionImage || undefined
+      );
+
+      if (!instructions || instructions.length === 0) {
+        setStatusMessage("No changes identified.");
+        setIsProcessing(false);
+        return;
+      }
+
+      setStatusMessage("Processing assets...");
+      // Handle special actions like image generation
+      for (const instruction of instructions) {
+        if (instruction.action === EditActionType.GENERATE_IMAGE && instruction.parameters.imagePrompt) {
+          setStatusMessage(`Generating: ${instruction.parameters.imagePrompt}`);
+          const generatedUrl = await generateReplacementImage(instruction.parameters.imagePrompt);
+          if (generatedUrl) {
+            instruction.parameters.imageUrl = generatedUrl;
+          }
+        }
+      }
+
+      setStatusMessage("Re-architecting PDF...");
+      const updatedPdfBytes = await applyEditsToPdf(pdfFile, instructions);
+      
+      pushToHistory(updatedPdfBytes);
+      await renderPage(updatedPdfBytes, currentPage);
+      
+      setStatusMessage("Success!");
+      setCommand("");
+      setSelection(null);
+      setSelectedText('');
+      setSelectionImage(null);
+    } catch (err) {
+      console.error(err);
+      setStatusMessage("Command failed.");
+    } finally {
+      setIsProcessing(false);
+      setTimeout(() => setStatusMessage(""), 3000);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -153,6 +198,16 @@ const App: React.FC = () => {
       const pdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
       setPdfMetadata({ name: file.name, pageCount: pdf.numPages, fileSize: file.size });
       pushToHistory(bytes);
+      
+      // Basic text extraction for global context
+      let fullText = "";
+      for (let i = 1; i <= Math.min(5, pdf.numPages); i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map((it: any) => it.str).join(" ") + "\n";
+      }
+      setPdfText(fullText);
+
       renderPage(bytes, 1);
     } catch (err) { setErrorMessage("Upload Error"); }
     finally { setIsProcessing(false); }
@@ -178,19 +233,62 @@ const App: React.FC = () => {
     setHistoryIndex(newHistory.length - 1);
   };
 
+  const downloadPdf = () => {
+    if (!pdfFile || !pdfMetadata) return;
+    const blob = new Blob([pdfFile], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Architect_${pdfMetadata.name}`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setShowExportMenu(false);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-900 text-white font-sans overflow-hidden">
       {/* Mobile-Optimized Header */}
-      <header className="bg-slate-800 border-b border-white/10 p-4 flex items-center justify-between z-50">
-        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-700 active:scale-90 lg:hidden">
-          <i className={`fas ${isSidebarOpen ? 'fa-times' : 'fa-bars'}`}></i>
-        </button>
-        <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 p-2 rounded-lg"><i className="fas fa-cubes text-sm"></i></div>
-          <span className="font-black text-sm tracking-tighter">ARCHITECT <span className="text-indigo-400">PRO</span></span>
+      <header className="bg-slate-800 border-b border-white/10 p-4 flex items-center justify-between z-50 shadow-2xl">
+        <div className="flex items-center gap-4">
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-700 active:scale-90 lg:hidden">
+            <i className={`fas ${isSidebarOpen ? 'fa-times' : 'fa-bars'}`}></i>
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="bg-indigo-600 p-2 rounded-lg shadow-lg shadow-indigo-500/20"><i className="fas fa-cubes text-sm"></i></div>
+            <span className="font-black text-sm tracking-tighter hidden sm:inline">ARCHITECT <span className="text-indigo-400">PRO</span></span>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => {}} className="bg-indigo-600 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest active:scale-95 shadow-lg">Export</button>
+
+        <div className="relative">
+          <button 
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            className="bg-indigo-600 hover:bg-indigo-500 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] active:scale-95 shadow-xl flex items-center gap-3 transition-all"
+          >
+            <i className="fas fa-file-export"></i> 
+            <span>Export & Build</span>
+          </button>
+
+          {showExportMenu && (
+            <div className="absolute right-0 mt-3 w-64 bg-slate-800 border border-white/10 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden z-[60] animate-in fade-in zoom-in-95">
+              <div className="p-3 border-b border-white/5 bg-slate-900/50">
+                <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Workspace Output</p>
+              </div>
+              <button onClick={downloadPdf} className="w-full p-4 flex items-center gap-4 hover:bg-white/5 text-left transition-colors">
+                <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center text-red-400"><i className="fas fa-file-pdf"></i></div>
+                <div>
+                  <p className="text-xs font-bold">Download PDF</p>
+                  <p className="text-[9px] text-slate-500">Current modified document</p>
+                </div>
+              </button>
+              <button onClick={() => { setShowApkModal(true); setShowExportMenu(false); }} className="w-full p-4 flex items-center gap-4 hover:bg-white/5 text-left transition-colors border-t border-white/5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400"><i className="fab fa-android"></i></div>
+                <div>
+                  <p className="text-xs font-bold">Build Android APK</p>
+                  <p className="text-[9px] text-slate-500">Generate native package</p>
+                </div>
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -204,27 +302,42 @@ const App: React.FC = () => {
                 {(['ai', 'text', 'rect'] as ToolMode[]).map(tool => (
                   <button key={tool} onClick={() => setActiveTool(tool)} className={`py-4 rounded-xl flex flex-col items-center gap-2 transition-all ${activeTool === tool ? 'bg-indigo-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}>
                     <i className={`fas ${tool === 'ai' ? 'fa-robot' : tool === 'text' ? 'fa-font' : 'fa-vector-square'}`}></i>
-                    <span className="text-[8px] font-black uppercase">{tool}</span>
+                    <span className="text-[8px] font-black uppercase tracking-widest">{tool}</span>
                   </button>
                 ))}
               </div>
             </section>
 
-            <section className="bg-slate-900 p-5 rounded-3xl border border-white/5 space-y-4">
-              <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Neural Input</p>
+            <section className="bg-slate-900 p-6 rounded-[2rem] border border-white/5 space-y-4 shadow-inner">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Neural Input</p>
+                <div className="flex gap-1">
+                  <span className={`w-1 h-1 rounded-full bg-indigo-500 ${isProcessing ? 'animate-ping' : ''}`}></span>
+                </div>
+              </div>
               <textarea 
                 value={command}
                 onChange={e => setCommand(e.target.value)}
-                placeholder="Replace header text..."
-                className="w-full h-32 bg-transparent text-sm font-medium resize-none focus:outline-none"
+                disabled={isProcessing}
+                placeholder="Example: Replace the title with 'Q3 Revenue Report'..."
+                className="w-full h-32 bg-transparent text-sm font-medium resize-none focus:outline-none placeholder:text-slate-700 leading-relaxed disabled:opacity-50"
               />
-              <button onClick={() => {}} className="w-full bg-indigo-600 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95">Execute Command</button>
+              <button 
+                onClick={handleCommandExecution}
+                disabled={isProcessing || !pdfFile}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isProcessing ? 'Architecting...' : 'Execute Command'}
+              </button>
             </section>
 
             {!pdfFile && (
-              <label className="block w-full bg-white text-slate-900 p-6 rounded-3xl text-center cursor-pointer active:scale-95 transition-transform shadow-2xl">
-                <i className="fas fa-file-upload text-2xl mb-2"></i>
-                <p className="font-black text-xs uppercase tracking-widest">Load Document</p>
+              <label className="group block w-full bg-white text-slate-900 p-8 rounded-[2.5rem] text-center cursor-pointer active:scale-95 transition-all shadow-2xl hover:bg-indigo-50">
+                <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                  <i className="fas fa-file-upload text-2xl text-indigo-600"></i>
+                </div>
+                <p className="font-black text-xs uppercase tracking-[0.2em]">Open PDF Project</p>
+                <p className="text-[9px] text-slate-400 mt-2 uppercase font-bold">PDF, DOCX Supported</p>
                 <input type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} />
               </label>
             )}
@@ -232,9 +345,9 @@ const App: React.FC = () => {
         </aside>
 
         {/* PDF Canvas Area */}
-        <main className="flex-1 bg-slate-950 overflow-auto flex items-start justify-center p-4 lg:p-12 relative">
+        <main className="flex-1 bg-slate-950 overflow-auto flex items-start justify-center p-4 lg:p-12 relative scrollbar-hide">
           {pdfFile ? (
-            <div className="relative shadow-2xl rounded-sm overflow-hidden bg-white">
+            <div className="relative shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8)] rounded-sm overflow-hidden bg-white">
               <canvas 
                 ref={canvasRef}
                 onMouseDown={handleStart} onMouseMove={handleMove} onMouseUp={handleEnd}
@@ -243,11 +356,10 @@ const App: React.FC = () => {
               />
               {selection && (
                 <div 
-                  className="absolute border-2 border-indigo-500 bg-indigo-500/10 pointer-events-none"
+                  className="absolute border-2 border-indigo-500 bg-indigo-500/5 pointer-events-none ring-1 ring-white/20"
                   style={{ left: `${selection.x1}%`, top: `${selection.y1}%`, width: `${selection.x2 - selection.x1}%`, height: `${selection.y2 - selection.y1}%` }}
                 >
-                  {/* Resize Handles - Touch Optimized */}
-                  <div className="absolute -top-3 -left-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg" />
+                  <div className="absolute -top-3 -left-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg flex items-center justify-center text-indigo-600 text-[10px] font-black"><i className="fas fa-expand"></i></div>
                   <div className="absolute -top-3 -right-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg" />
                   <div className="absolute -bottom-3 -left-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg" />
                   <div className="absolute -bottom-3 -right-3 w-8 h-8 bg-white border-2 border-indigo-500 rounded-full shadow-lg" />
@@ -255,26 +367,81 @@ const App: React.FC = () => {
               )}
             </div>
           ) : (
-            <div className="m-auto text-center opacity-20">
-              <i className="fas fa-file-pdf text-9xl mb-6"></i>
-              <p className="font-black uppercase tracking-[0.4em]">Standby</p>
+            <div className="m-auto text-center">
+              <div className="w-32 h-32 bg-slate-800 rounded-[3rem] flex items-center justify-center mx-auto mb-8 animate-pulse shadow-inner">
+                <i className="fas fa-file-pdf text-slate-700 text-6xl"></i>
+              </div>
+              <p className="font-black text-slate-700 uppercase tracking-[0.5em] text-sm">Waiting for Document</p>
             </div>
           )}
 
-          {/* Page Indicator - Floats at bottom center */}
           {pdfFile && (
-             <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-800/80 backdrop-blur-xl px-6 py-3 rounded-full border border-white/10 flex items-center gap-6 shadow-2xl">
-                <button onClick={() => setCurrentPage(p => Math.max(1, p-1))} className="text-slate-400 hover:text-white"><i className="fas fa-chevron-left"></i></button>
-                <span className="text-xs font-black tabular-nums">{currentPage} / {pdfMetadata?.pageCount}</span>
-                <button onClick={() => setCurrentPage(p => Math.min(pdfMetadata!.pageCount, p+1))} className="text-slate-400 hover:text-white"><i className="fas fa-chevron-right"></i></button>
+             <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-800/90 backdrop-blur-2xl px-8 py-4 rounded-full border border-white/10 flex items-center gap-8 shadow-2xl z-40">
+                <button onClick={() => {const np = Math.max(1, currentPage-1); setCurrentPage(np); renderPage(pdfFile, np);}} className="text-slate-400 hover:text-white transition-colors"><i className="fas fa-chevron-left"></i></button>
+                <div className="text-center">
+                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Page</p>
+                  <span className="text-xs font-black tabular-nums">{currentPage} <span className="text-white/20">/</span> {pdfMetadata?.pageCount}</span>
+                </div>
+                <button onClick={() => {const np = Math.min(pdfMetadata!.pageCount, currentPage+1); setCurrentPage(np); renderPage(pdfFile, np);}} className="text-slate-400 hover:text-white transition-colors"><i className="fas fa-chevron-right"></i></button>
              </div>
           )}
         </main>
       </div>
 
+      {/* APK BUILD MODAL */}
+      {showApkModal && (
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6 animate-in fade-in duration-300">
+          <div className="bg-slate-900 w-full max-w-2xl rounded-[3rem] border border-white/10 shadow-[0_50px_100px_rgba(0,0,0,0.8)] overflow-hidden">
+            <div className="p-12 space-y-10">
+              <div className="text-center">
+                <div className="w-24 h-24 bg-emerald-500/20 rounded-[2.5rem] flex items-center justify-center mx-auto mb-6 text-emerald-400 shadow-xl">
+                  <i className="fab fa-android text-5xl"></i>
+                </div>
+                <h3 className="text-3xl font-black tracking-tighter">Android APK Pipeline</h3>
+                <p className="text-slate-400 text-sm mt-3 font-medium">To generate your APK, run the following commands in your terminal:</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="bg-black/50 p-6 rounded-[2rem] font-mono text-xs border border-white/5 relative group">
+                  <p className="text-indigo-400 mb-2"># Install dependencies & build</p>
+                  <p className="text-slate-300">npm install</p>
+                  <p className="text-slate-300">npx cap sync android</p>
+                  <p className="text-slate-300">npx cap open android</p>
+                  <button 
+                    onClick={() => {navigator.clipboard.writeText("npm install; npx cap sync android; npx cap open android"); setStatusMessage("Commands Copied!");}}
+                    className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors"
+                  >
+                    <i className="fas fa-copy"></i>
+                  </button>
+                </div>
+
+                <div className="bg-slate-800/50 p-6 rounded-[2rem] space-y-3">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Next Steps in Android Studio:</p>
+                  <ul className="text-xs space-y-2 font-medium">
+                    <li className="flex items-center gap-3"><i className="fas fa-check-circle text-emerald-500"></i> Wait for Gradle sync to complete.</li>
+                    <li className="flex items-center gap-3"><i className="fas fa-check-circle text-emerald-500"></i> Click "Build" > "Build APK(s)".</li>
+                    <li className="flex items-center gap-3"><i className="fas fa-check-circle text-emerald-500"></i> Locate your APK in the "debug" folder.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => setShowApkModal(false)}
+                className="w-full bg-white text-slate-900 py-5 rounded-[2rem] font-black uppercase tracking-[0.25em] text-xs shadow-2xl active:scale-95 transition-all"
+              >
+                Close Build Center
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {statusMessage && (
-        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] bg-indigo-600 text-white px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] shadow-2xl animate-bounce">
-          {statusMessage}
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[110] animate-in slide-in-from-bottom-12">
+           <div className="bg-indigo-600 text-white px-10 py-4 rounded-full shadow-2xl flex items-center gap-4 border border-white/20">
+              <i className="fas fa-bolt animate-pulse"></i>
+              <span className="text-[10px] font-black uppercase tracking-widest">{statusMessage}</span>
+           </div>
         </div>
       )}
     </div>
